@@ -1,8 +1,10 @@
 FROM php:8.2-apache
 
-# Install required system dependencies and PHP extensions
+# Install system dependencies and PHP extensions (including GD for Excel parsing)
 RUN apt-get update && apt-get install -y \
     libpng-dev \
+    libjpeg62-turbo-dev \
+    libfreetype6-dev \
     libonig-dev \
     libxml2-dev \
     libzip-dev \
@@ -10,7 +12,8 @@ RUN apt-get update && apt-get install -y \
     unzip \
     git \
     curl \
-    && docker-php-ext-install pdo pdo_mysql mbstring zip bcmath
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install pdo pdo_mysql mbstring zip bcmath gd
 
 # Enable Apache mod_rewrite for Laravel routing
 RUN a2enmod rewrite
