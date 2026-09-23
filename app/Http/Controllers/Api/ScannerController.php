@@ -7,8 +7,8 @@ use Illuminate\Http\Request;
 use App\Models\BarangayOfficialProfile;
 use App\Models\TupadBeneficiaryProfile;
 use Carbon\Carbon;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date;
+use OpenSpout\Reader\XLSX\Reader; // <-- Added missing import
 
 class ScannerController extends Controller
 {
@@ -45,7 +45,6 @@ class ScannerController extends Controller
             : (string) $provinceInput;
         $searchProvince = trim($searchProvince);
 
-        // OPTIMIZATION 1: Use toBase() for lightweight stdClass objects instead of Eloquent models
         $officials = BarangayOfficialProfile::query()
             ->leftJoin('provinces', 'provinces.id', '=', 'barangay_official_profiles.province_id')
             ->where(function ($q) use ($searchProvince) {
@@ -68,7 +67,6 @@ class ScannerController extends Controller
             }
         }
 
-        // OPTIMIZATION 2: Read raw cell values only with memory-safe sheet loading
         $sheets = $this->readExcelFile($request->file('lob_file'));
 
         $results = ['officials_hard' => [], 'officials_soft' => []];
@@ -91,7 +89,6 @@ class ScannerController extends Controller
                 if (isset($officialsLookup[$lookupKey])) {
                     $matches = $officialsLookup[$lookupKey];
 
-                    // OPTIMIZATION 3: Native PHP loop instead of collect()->first()
                     $hardMatch = null;
                     foreach ($matches as $off) {
                         $dbMiddle = strtolower(trim(preg_replace('/\s+/', ' ', $off->middle_name ?? '')));
@@ -143,7 +140,6 @@ class ScannerController extends Controller
         $batchStartDate = Carbon::parse($request->start_date);
         $oneYearCutoff = $batchStartDate->copy()->subDays(365)->format('Y-m-d');
 
-        // OPTIMIZATION 1: Use toBase() for fast stdClass lookup without Eloquent model weight
         $recentBeneficiaries = TupadBeneficiaryProfile::select('first_name', 'middle_name', 'last_name', 'suffix')
             ->where('start_date', '>=', $oneYearCutoff)
             ->toBase()
@@ -176,7 +172,6 @@ class ScannerController extends Controller
             }
         }
 
-        // OPTIMIZATION 2: Read raw cell values safely
         $sheets = $this->readExcelFile($request->file('lob_file'));
 
         $totalProcessed = 0;
@@ -206,11 +201,9 @@ class ScannerController extends Controller
 
                 $totalProcessed++;
 
-                // Standardize Sex
                 $sex = str_starts_with($sexRaw, 'F') ? 'F' : 'M';
                 if ($sex === 'F') $femaleCount++;
 
-                // Safe Birthdate parsing
                 $bDate = $this->safeParseDate($row[5] ?? null);
 
                 if ($age <= 0 && $bDate) {
@@ -247,7 +240,6 @@ class ScannerController extends Controller
                     $offMatches = $officialsLookup[$lookupKey];
                     $isOfficial = false;
 
-                    // OPTIMIZATION 3: Native PHP loop instead of collect()->contains()
                     foreach ($offMatches as $off) {
                         $dbMiddle = strtolower(trim(preg_replace('/\s+/', ' ', $off->middle_name ?? '')));
                         $dbSuffix = strtolower(trim(preg_replace('/\s+/', ' ', $off->suffix ?? '')));
@@ -278,7 +270,6 @@ class ScannerController extends Controller
                     $matches = $beneficiaryLookup[$lookupKey];
                     $isDupe = false;
 
-                    // OPTIMIZATION 3: Native PHP loop instead of collect()->contains()
                     foreach ($matches as $b) {
                         $dbMiddle = strtolower(trim(preg_replace('/\s+/', ' ', $b->middle_name ?? '')));
                         $dbSuffix = strtolower(trim(preg_replace('/\s+/', ' ', $b->suffix ?? '')));
@@ -365,38 +356,32 @@ class ScannerController extends Controller
     }
 
     /**
-     * Helper to read Excel files sheet-by-sheet with minimal memory footprint
+     * Memory-safe OpenSpout XLSX Reader
      */
-   private function readExcelFile($file): array
-{
-    $filePath = $file->getRealPath();
-    
-    $reader = new Reader();
-    $reader->open($filePath);
+    private function readExcelFile($file): array
+    {
+        $filePath = $file->getRealPath();
 
-    $sheets = [];
+        $reader = new Reader();
+        $reader->open($filePath);
 
-    foreach ($reader->getSheetIterator() as $sheet) {
-        $sheetRows = [];
-        foreach ($sheet->getRowIterator() as $row) {
-            // Convert row object cells to a plain array
-            $cells = $row->getCells();
-            $rowValues = [];
-            
-            foreach ($cells as $cell) {
-                $rowValues[] = $cell->getValue();
+        $sheets = [];
+
+        foreach ($reader->getSheetIterator() as $sheet) {
+            $sheetRows = [];
+            foreach ($sheet->getRowIterator() as $row) {
+                // toArray() extracts cell values cleanly and efficiently
+                $sheetRows[] = method_exists($row, 'toArray') ? $row->toArray() : array_map(fn($cell) => $cell->getValue(), $row->getCells());
             }
-
-            $sheetRows[] = $rowValues;
+            $sheets[] = $sheetRows;
         }
-        $sheets[] = $sheetRows;
+
+        $reader->close();
+        gc_collect_cycles();
+
+        return $sheets;
     }
 
-    $reader->close();
-    gc_collect_cycles();
-
-    return $sheets;
-}
     /**
      * Safely parse dates from Excel numbers or ambiguous strings
      */
