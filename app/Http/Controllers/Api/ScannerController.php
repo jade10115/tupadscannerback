@@ -367,34 +367,36 @@ class ScannerController extends Controller
     /**
      * Helper to read Excel files sheet-by-sheet with minimal memory footprint
      */
-    private function readExcelFile($file): array
-    {
-        $filePath = $file->getRealPath();
-        $reader = IOFactory::createReaderForFile($filePath);
-        $reader->setReadDataOnly(true); // Don't load styling, formulas, or formatting
+   private function readExcelFile($file): array
+{
+    $filePath = $file->getRealPath();
+    
+    $reader = new Reader();
+    $reader->open($filePath);
 
-        $info = $reader->listWorksheetInfo($filePath);
-        $sheets = [];
+    $sheets = [];
 
-        foreach ($info as $sheetInfo) {
-            $sheetName = $sheetInfo['worksheetName'];
-            $reader->setLoadSheetsOnly($sheetName);
+    foreach ($reader->getSheetIterator() as $sheet) {
+        $sheetRows = [];
+        foreach ($sheet->getRowIterator() as $row) {
+            // Convert row object cells to a plain array
+            $cells = $row->getCells();
+            $rowValues = [];
+            
+            foreach ($cells as $cell) {
+                $rowValues[] = $cell->getValue();
+            }
 
-            $spreadsheet = $reader->load($filePath);
-            $sheet = $spreadsheet->getActiveSheet();
-            $sheets[] = $sheet->toArray(null, true, false, false);
-
-            $spreadsheet->disconnectWorksheets();
-            unset($spreadsheet, $sheet);
-            gc_collect_cycles(); // Force immediate garbage collection after each sheet
+            $sheetRows[] = $rowValues;
         }
-
-        unset($reader);
-        gc_collect_cycles();
-
-        return $sheets;
+        $sheets[] = $sheetRows;
     }
 
+    $reader->close();
+    gc_collect_cycles();
+
+    return $sheets;
+}
     /**
      * Safely parse dates from Excel numbers or ambiguous strings
      */
