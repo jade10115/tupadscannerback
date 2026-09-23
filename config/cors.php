@@ -6,7 +6,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['http://localhost:5173', 'https://tssdappregion8.online'],
+    'allowed_origins' => ['http://localhost:5173', 'https://tssdappregion8.online', 'https://tupadscanner.onrender.com'],
 
     'allowed_origins_patterns' => [],
 
