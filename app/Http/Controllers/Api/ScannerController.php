@@ -31,7 +31,8 @@ class ScannerController extends Controller
     public function scanBarangayOfficials(Request $request)
     {
         set_time_limit(300);
-        ini_set('memory_limit', '512M');
+        ini_set('memory_limit', '384M');
+        gc_enable();
 
         $request->validate([
             'lob_file' => 'required|file',
@@ -67,7 +68,7 @@ class ScannerController extends Controller
             }
         }
 
-        // OPTIMIZATION 2: Read raw cell values only (Saves ~80% memory)
+        // OPTIMIZATION 2: Read raw cell values only with memory-safe sheet loading
         $sheets = $this->readExcelFile($request->file('lob_file'));
 
         $results = ['officials_hard' => [], 'officials_soft' => []];
@@ -130,7 +131,8 @@ class ScannerController extends Controller
     public function scanTupadDuplicates(Request $request)
     {
         set_time_limit(300);
-        ini_set('memory_limit', '512M');
+        ini_set('memory_limit', '384M');
+        gc_enable();
 
         $request->validate([
             'lob_file'   => 'required|file',
@@ -174,7 +176,7 @@ class ScannerController extends Controller
             }
         }
 
-        // OPTIMIZATION 2: Read raw values only
+        // OPTIMIZATION 2: Read raw cell values safely
         $sheets = $this->readExcelFile($request->file('lob_file'));
 
         $totalProcessed = 0;
@@ -363,7 +365,7 @@ class ScannerController extends Controller
     }
 
     /**
-     * Helper to read Excel files with minimal memory footprint
+     * Helper to read Excel files sheet-by-sheet with minimal memory footprint
      */
     private function readExcelFile($file): array
     {
@@ -371,16 +373,24 @@ class ScannerController extends Controller
         $reader = IOFactory::createReaderForFile($filePath);
         $reader->setReadDataOnly(true); // Don't load styling, formulas, or formatting
 
-        $spreadsheet = $reader->load($filePath);
+        $info = $reader->listWorksheetInfo($filePath);
         $sheets = [];
 
-        foreach ($spreadsheet->getAllSheets() as $sheet) {
+        foreach ($info as $sheetInfo) {
+            $sheetName = $sheetInfo['worksheetName'];
+            $reader->setLoadSheetsOnly($sheetName);
+
+            $spreadsheet = $reader->load($filePath);
+            $sheet = $spreadsheet->getActiveSheet();
             $sheets[] = $sheet->toArray(null, true, false, false);
+
+            $spreadsheet->disconnectWorksheets();
+            unset($spreadsheet, $sheet);
+            gc_collect_cycles(); // Force immediate garbage collection after each sheet
         }
 
-        $spreadsheet->disconnectWorksheets();
-        unset($spreadsheet, $reader);
-        gc_collect_cycles(); // Force garbage collection
+        unset($reader);
+        gc_collect_cycles();
 
         return $sheets;
     }
